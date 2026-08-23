@@ -1,0 +1,7 @@
+# Conveyor clothing — single class instance detection
+path: /Users/macbook/Code/compfest/wastara-model/datasets/conveyor_clothing
+train: images/train
+val: images/val
+names:
+  0: clothing
+nc: 1

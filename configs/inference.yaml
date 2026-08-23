@@ -1,0 +1,19 @@
+# Inference pipeline settings (stage 1 garment detection)
+
+confidence_threshold: 0.5
+iou_threshold: 0.45
+frame_skip: 1  # process every Nth frame (1 = all frames)
+
+# Drop shoes/bags/accessories; keep Clothing (baju/celana) only
+keep_garment_only: true
+
+input_dir: data/input/videos
+output_dir: data/output
+
+save_annotated_video: true
+save_detection_frames: true   # save frames that contain ≥1 detection
+save_all_frames: false        # never dump every frame by default
+
+# Drawing
+box_thickness: 2
+font_scale: 0.55

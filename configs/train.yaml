@@ -1,0 +1,22 @@
+# Fine-tune YOLOv8n for conveyor garment instance detection
+
+# start from nano COCO weights (single-class clothing for Wastara)
+base_model: yolov8n.pt
+data: datasets/conveyor_clothing/data.yaml
+
+epochs: 80
+imgsz: 640
+batch: 4
+device: auto  # cuda | mps | cpu
+workers: 2
+patience: 25
+seed: 42
+
+# outputs
+project: runs/detect
+name: conveyor_clothing
+exist_ok: true
+
+# export / share path after training
+export_dir: models/clothing/finetuned
+export_name: yolov8n-conveyor-clothing.pt

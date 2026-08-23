@@ -1,0 +1,50 @@
+# Garment inspection pipeline (detect → track → zone → sample → defect)
+
+model:
+  garment_config: configs/model.yaml
+  # Mode A: path to supervised defect YOLO (optional; leave empty if unused)
+  defect_detector: ""
+  # Mode B is default when defect_detector is empty / missing
+  defect_mode: anomaly  # anomaly | supervised
+
+tracking:
+  tracker: iou  # bytetrack | iou
+  track_threshold: 0.4
+  match_iou: 0.3
+  track_buffer: 30
+  min_hits: 2
+
+inspection:
+  # Normalized ROI on full frame [x1, y1, x2, y2] in 0–1
+  # Center band of conveyor — adjust per camera setup
+  zone:
+    x1: 0.05
+    y1: 0.15
+    x2: 0.95
+    y2: 0.85
+  # overlap ratio between garment bbox and zone to count as "inside"
+  zone_overlap_threshold: 0.35
+  sample_count: 5
+  min_center_shift_px: 12  # skip near-duplicate poses
+
+defect:
+  confidence_threshold: 0.55
+  minimum_confirmations: 2
+  aggregation_method: temporal_consensus
+  anomaly_score_threshold: 0.55
+  anomaly_min_area_ratio: 0.008
+
+streaming:
+  cooldown_frames: 8
+  minimum_confirmations: 1
+  confidence_threshold: 0.42
+
+output:
+  save_evidence: true
+  save_annotated_video: true
+  save_json: true
+  output_dir: data/output/inspection
+
+video:
+  frame_skip: 1
+  device: auto

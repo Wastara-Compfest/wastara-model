@@ -1,0 +1,14 @@
+# Stage 1 — conveyor clothing object detection (fine-tuned)
+
+# Prefer fine-tuned weights when available; fallback to pretrained kesimeg
+model_path: models/clothing/finetuned/yolov8n-conveyor-clothing.pt
+model_type: yolov8n-detect
+dataset_name: conveyor_clothing
+input_size: 640
+device: auto  # auto | cuda | mps | cpu
+
+# Fine-tuned single-class model
+class_mapping:
+  0: clothing
+
+garment_class_ids: [0]
