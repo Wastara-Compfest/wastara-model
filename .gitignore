@@ -1,0 +1,62 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Model weights (large binary)
+models/**/*.pt
+models/**/*.onnx
+models/**/*.engine
+!models/**/.gitkeep
+
+# Datasets (large)
+datasets/deepfashion2/raw/**
+!datasets/deepfashion2/raw/.gitkeep
+datasets/deepfashion2/annotations/**
+!datasets/deepfashion2/annotations/.gitkeep
+*.zip
+*.tar
+*.tar.gz
+
+# Runtime outputs
+data/input/videos/**
+!data/input/videos/.gitkeep
+data/output/annotated_videos/**
+!data/output/annotated_videos/.gitkeep
+data/output/frames/**
+!data/output/frames/.gitkeep
+data/output/detections/**
+!data/output/detections/.gitkeep
+data/output/inspection/**
+
+# Training artifacts (keep exported finetuned weights instructions; ignore huge runs)
+runs/
+datasets/conveyor_clothing/raw_frames/
+datasets/conveyor_clothing/proposals_preview/
+datasets/conveyor_clothing/auto_labels/
+datasets/conveyor_clothing/images/
+datasets/conveyor_clothing/labels/
+!datasets/conveyor_clothing/data.yaml
+!datasets/conveyor_clothing/README.md
+
+# Env
+.env
+.env.*
+!.env.example
