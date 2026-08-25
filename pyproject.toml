@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.28.0",
     "websocket-client>=1.8.0",
     "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]

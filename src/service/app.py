@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from src.service.backend_client import BackendClient
 from src.service.frame_queue import CaptureError
 from src.service.runtime import InspectionRuntime
+from src.service.video_inspection_job import run_video_inspection_job
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -86,6 +90,35 @@ def camera_status():
         "queue_depth": st.queue_depth,
         "dropped_frames": st.dropped_frames,
     }
+
+
+UPLOAD_DIR = Path(__file__).resolve().parents[2] / "data" / "uploads"
+
+
+@app.post("/inspections/video")
+async def inspect_video(
+    file: UploadFile = File(...),
+    machine_id: str = Form("LOOM-01"),
+    video_inspection_id: str = Form(...),
+):
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    dest = UPLOAD_DIR / f"{video_inspection_id}_{file.filename}"
+    with dest.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    backend = BackendClient(base_url=BACKEND_URL, internal_api_key=INTERNAL_API_KEY)
+    thread = threading.Thread(
+        target=run_video_inspection_job,
+        kwargs=dict(
+            video_path=dest,
+            machine_id=machine_id,
+            video_inspection_id=video_inspection_id,
+            backend=backend,
+        ),
+        daemon=True,
+    )
+    thread.start()
+    return {"status": "processing", "video_inspection_id": video_inspection_id}
 
 
 @app.get("/health")

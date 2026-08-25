@@ -6,13 +6,7 @@ import time
 from dataclasses import dataclass
 
 from src.service.backend_client import AnomalyEvent, BackendClient
-from src.service.frame_queue import (
-    CaptureError,
-    FrameQueue,
-    is_file_source,
-    start_capture_thread,
-    start_smart_capture_thread,
-)
+from src.service.frame_queue import CaptureError, FrameQueue, start_event_capture_thread
 from src.service.streaming_engine import StreamingInspectionEngine
 
 logger = logging.getLogger(__name__)
@@ -66,11 +60,12 @@ class InspectionRuntime:
             self._engine = StreamingInspectionEngine()
 
             try:
-                self._capture_thread = start_capture_thread(
+                self._capture_thread = start_event_capture_thread(
                     source=source,
                     frame_queue=self._queue,
                     stop_event=self._stop,
-                    target_fps=24.0,
+                    detector=self._engine.detector,
+                    tracking_cfg=self._engine.cfg.get("tracking", {}),
                 )
             except CaptureError:
                 self._engine = None

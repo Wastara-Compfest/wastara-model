@@ -22,6 +22,7 @@ class AnomalyEvent:
     bbox_h: int
     frame_start: int
     frame_end: int
+    video_inspection_id: str | None = None
 
 
 class BackendClient:
@@ -57,6 +58,8 @@ class BackendClient:
             },
             "frames": {"start": event.frame_start, "end": event.frame_end},
         }
+        if event.video_inspection_id:
+            payload["video_inspection_id"] = event.video_inspection_id
         try:
             res = self._http.post(
                 f"{self.base_url}/internal/defect-events",
@@ -70,6 +73,28 @@ class BackendClient:
         except Exception as exc:
             logger.warning("failed to post defect event: %s", exc)
             return None
+
+    def post_inspection_complete(
+        self,
+        video_inspection_id: str,
+        *,
+        status: str,
+        defect_count: int = 0,
+        error_message: str | None = None,
+    ) -> None:
+        try:
+            res = self._http.post(
+                f"{self.base_url}/internal/video-inspections/{video_inspection_id}/complete",
+                headers={"X-Internal-Key": self.internal_api_key},
+                json={
+                    "status": status,
+                    "defect_count": defect_count,
+                    "error_message": error_message,
+                },
+            )
+            res.raise_for_status()
+        except Exception as exc:
+            logger.warning("failed to post inspection complete: %s", exc)
 
     def send_frame_jpeg(self, frame: np.ndarray, quality: int = 72) -> None:
         ok, buf = cv2.imencode(
