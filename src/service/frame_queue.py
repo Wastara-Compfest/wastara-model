@@ -26,9 +26,11 @@ class QueuedFrame:
 
 class FrameQueue:
     def __init__(self, maxsize: int = 30) -> None:
-        self._queue: queue.Queue[QueuedFrame | None] = queue.Queue(maxsize=maxsize)
+        self._queue: queue.Queue[QueuedFrame] = queue.Queue(maxsize=maxsize)
         self._maxsize = maxsize
         self._dropped = 0
+        self._accepted = 0
+        self._closed = threading.Event()
 
     @property
     def depth(self) -> int:
@@ -38,7 +40,17 @@ class FrameQueue:
     def dropped(self) -> int:
         return self._dropped
 
+    @property
+    def accepted(self) -> int:
+        return self._accepted
+
+    @property
+    def closed(self) -> bool:
+        return self._closed.is_set()
+
     def put(self, item: QueuedFrame) -> None:
+        if self._closed.is_set():
+            return
         if self._queue.full():
             try:
                 self._queue.get_nowait()
@@ -46,6 +58,7 @@ class FrameQueue:
             except queue.Empty:
                 pass
         self._queue.put(item)
+        self._accepted += 1
 
     def get(self, timeout: float = 1.0) -> QueuedFrame | None:
         try:
@@ -57,7 +70,7 @@ class FrameQueue:
         return item
 
     def close(self) -> None:
-        self._queue.put(None)
+        self._closed.set()
 
     def clear(self) -> None:
         while True:
@@ -102,6 +115,7 @@ def start_capture_thread(
     source: str,
     frame_queue: FrameQueue,
     stop_event: threading.Event,
+    released_event: threading.Event | None = None,
     target_fps: float = 24.0,
 ) -> threading.Thread:
     import cv2
@@ -115,34 +129,35 @@ def start_capture_thread(
     def _run() -> None:
         frame_id = 0
         interval = 1.0 / max(1.0, target_fps)
-        last = time.perf_counter()
 
-        while not stop_event.is_set():
-            ok, frame = cap.read()
-            if not ok:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        try:
+            while not stop_event.is_set():
                 ok, frame = cap.read()
                 if not ok:
-                    time.sleep(0.05)
-                    continue
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ok, frame = cap.read()
+                    if not ok:
+                        time.sleep(0.05)
+                        continue
 
-            now = time.perf_counter()
-            last = now
-            frame_queue.put(
-                QueuedFrame(
-                    frame_id=frame_id,
-                    timestamp_ms=frame_id * interval * 1000.0,
-                    image=frame.copy(),
+                now = time.perf_counter()
+                frame_queue.put(
+                    QueuedFrame(
+                        frame_id=frame_id,
+                        timestamp_ms=frame_id * interval * 1000.0,
+                        image=frame.copy(),
+                    )
                 )
-            )
-            frame_id += 1
+                frame_id += 1
 
-            sleep_for = interval - (time.perf_counter() - now)
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-
-        cap.release()
-        frame_queue.close()
+                sleep_for = interval - (time.perf_counter() - now)
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+        finally:
+            cap.release()
+            if released_event is not None:
+                released_event.set()
+            frame_queue.close()
 
     thread = threading.Thread(target=_run, name="capture", daemon=True)
     thread.start()

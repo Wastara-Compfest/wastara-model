@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.service.frame_queue import CaptureError
-from src.service.runtime import InspectionRuntime
+from src.service.runtime import InspectionRuntime, RuntimeConflict
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -56,35 +56,54 @@ def camera_start(body: StartRequest):
             source=body.source,
             machine_id=body.machine_id,
         )
+    except RuntimeConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "error",
+                "code": "SESSION_STILL_PROCESSING",
+                "state": exc.state,
+                "message": "Sesi sebelumnya masih diproses.",
+            },
+        )
     except CaptureError as exc:
         return JSONResponse(
             status_code=503,
             content={"status": "error", "message": exc.message},
         )
-    return {"status": "running", **body.model_dump()}
+    return {"status": "running", "state": "CAPTURING", **body.model_dump()}
 
 
 @app.post("/camera/stop")
 def camera_stop():
     if _runtime is None:
-        return {"status": "stopped"}
-    _runtime.stop()
-    return {"status": "stopped"}
+        return {"status": "stopped", "state": "IDLE"}
+    return _status_payload(_runtime.stop())
 
 
 @app.get("/camera/status")
 def camera_status():
     if _runtime is None:
-        return {"running": False}
-    st = _runtime.status()
+        return {"running": False, "state": "IDLE"}
+    return _status_payload(_runtime.status())
+
+
+def _status_payload(st):
     return {
+        "state": st.state,
         "running": st.running,
         "machine_id": st.machine_id,
         "source": st.source,
         "fps_capture": round(st.fps_capture, 2),
         "fps_inference": round(st.fps_inference, 2),
         "queue_depth": st.queue_depth,
-        "dropped_frames": st.dropped_frames,
+        "captured_frames": st.captured_frames,
+        "processed_frames": st.processed_frames,
+        "remaining_frames": st.remaining_frames,
+        "dropped_inference_frames": st.dropped_inference_frames,
+        "dropped_frames": st.dropped_inference_frames,
+        "failed_frames": st.failed_frames,
+        "camera_released": st.camera_released,
     }
 
 
