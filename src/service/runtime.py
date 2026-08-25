@@ -6,7 +6,13 @@ import time
 from dataclasses import dataclass
 
 from src.service.backend_client import AnomalyEvent, BackendClient
-from src.service.frame_queue import CaptureError, FrameQueue, start_capture_thread
+from src.service.frame_queue import (
+    CaptureError,
+    FrameQueue,
+    is_file_source,
+    start_capture_thread,
+    start_smart_capture_thread,
+)
 from src.service.streaming_engine import StreamingInspectionEngine
 
 logger = logging.getLogger(__name__)
