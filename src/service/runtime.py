@@ -66,6 +66,7 @@ class InspectionRuntime:
                     stop_event=self._stop,
                     detector=self._engine.detector,
                     tracking_cfg=self._engine.cfg.get("tracking", {}),
+                    on_frame=self._backend.send_frame_jpeg,
                 )
             except CaptureError:
                 self._engine = None
@@ -147,7 +148,7 @@ class InspectionRuntime:
 
     def _process_item(self, engine: StreamingInspectionEngine, item) -> None:
         try:
-            vis, alerts = engine.process_frame(
+            _vis, alerts = engine.process_frame(
                 item.image,
                 frame_id=item.frame_id,
                 timestamp_ms=item.timestamp_ms,
@@ -157,7 +158,6 @@ class InspectionRuntime:
             return
 
         self._infer_count += 1
-        self._backend.send_frame_jpeg(vis)
 
         machine_id = self._machine_id or "LOOM-01"
         for alert in alerts:

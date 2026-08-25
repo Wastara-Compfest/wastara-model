@@ -112,6 +112,7 @@ def start_event_capture_thread(
     stop_event: threading.Event,
     detector,
     tracking_cfg: dict | None = None,
+    on_frame=None,
 ) -> threading.Thread:
     cap, resolved = open_capture(source)
     if not cap.isOpened():
@@ -146,6 +147,9 @@ def start_event_capture_thread(
             timestamp_ms = (
                 (frame_id / video_fps) * 1000.0 if is_video else time.perf_counter() * 1000.0
             )
+
+            if on_frame is not None:
+                on_frame(frame)
 
             detections = detector.predict(frame)
             tracks = gate_tracker.update(
