@@ -1,0 +1,16 @@
+services:
+  model:
+    build: .
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    environment:
+      - BACKEND_URL=${BACKEND_URL:-http://host.docker.internal:8000}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-change-me}
+      - DEVICE=${DEVICE:-cpu}
+    extra_hosts:
+      # Lets the container reach a wastara-be running on the host (Mac/Windows
+      # Docker Desktop already resolve this; Linux needs the explicit mapping).
+      - "host.docker.internal:host-gateway"

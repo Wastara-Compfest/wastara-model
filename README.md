@@ -17,6 +17,15 @@ Default defect mode is **anomaly (Mode B)** — no fabricated supervised defect 
 
 ---
 
+## Related repos
+
+| Repo | Role |
+|------|------|
+| [wastara-fe](https://github.com/Wastara-Compfest/wastara-fe) | Operator dashboard (Next.js) — never calls this service directly |
+| [wastara-be](https://github.com/Wastara-Compfest/wastara-be) | Backend API — proxies camera control here and receives detection results at `/internal/defect-events` |
+
+---
+
 ## Stack
 
 | Tool | Role |
@@ -60,12 +69,45 @@ wastara-model/
 
 ---
 
-## Setup (uv)
+## Setup without Docker (uv)
 
 ```bash
 cd wastara-model
 uv sync
+cp .env.example .env   # set BACKEND_URL / INTERNAL_API_KEY to match wastara-be
+uv run wastara-serve   # FastAPI service on :8100
 ```
+
+## Setup with Docker
+
+```bash
+docker compose up --build
+```
+
+Serves the same FastAPI app on `http://localhost:8100`. `./models` and `./data` are mounted as volumes, so weights and uploaded/output files persist and can be swapped without rebuilding. Set `BACKEND_URL`/`INTERNAL_API_KEY` to match `wastara-be` (defaults assume `wastara-be` is running on the host at `:8000` — see `docker-compose.yml`).
+
+**Live webcam does not work inside Docker** — Docker Desktop on macOS/Windows has no camera device passthrough. Docker mode is for the **mock-data path**: feed a recorded video file as the inspection `source` (see `NEXT_PUBLIC_INSPECTION_SOURCE` in `wastara-fe`, or upload a video through the dashboard's Live View) — the real detection pipeline runs identically either way. For an actual live webcam demo, run `uv run wastara-serve` directly on the host instead.
+
+### Model weights
+
+`configs/model.yaml` defaults to `models/clothing/finetuned/yolov8n-conveyor-clothing.pt`, which is **gitignored** (too large for git) and must be shared out-of-band (Drive/zip/git-lfs) between teammates. Without it, the service fails to start with `FileNotFoundError`. If you don't have that file, use the generic pretrained fallback instead:
+
+```bash
+uv run python scripts/download_pretrained.py
+MODEL_PATH=models/clothing/pretrained/yolov8n-clothing-detection.pt uv run wastara-serve
+# or with Docker: set MODEL_PATH in .env before `docker compose up`
+```
+
+## Environment variables
+
+| Variable | Default (`.env.example`) | Keterangan |
+|---|---|---|
+| `PORT` | `8100` | HTTP port for the FastAPI service |
+| `BACKEND_URL` | `http://localhost:8000` | Base URL of `wastara-be`, used to push detections/frames and camera-control acks |
+| `INTERNAL_API_KEY` | `change-me` | Shared secret with `wastara-be`'s internal endpoints — must match exactly |
+| `DEVICE` | `auto` | Inference device: `auto` \| `cuda` \| `mps` \| `cpu` |
+| `MODEL_PATH` | (from `configs/model.yaml`) | Override the garment detector weights path |
+| `CONFIDENCE_THRESHOLD` / `IOU_THRESHOLD` | `0.5` / `0.45` | Detection thresholds |
 
 ---
 
@@ -153,6 +195,18 @@ data/output/inspection/annotated_videos/*_inspection.mp4
 ```
 
 Latency is logged separately for garment detection, tracking, and defect analysis.
+
+---
+
+## HTTP API (`wastara-serve`, called by `wastara-be`)
+
+| Method | Path | Keterangan |
+|---|---|---|
+| GET | `/health` | Health check |
+| POST | `/camera/start` | `{source, machine_id}` — starts the live capture+inference loop (webcam or a video file path) |
+| POST | `/camera/stop` | Stops it |
+| GET | `/camera/status` | Running state, queue depth, dropped frames |
+| POST | `/inspections/video` | `multipart/form-data`: `file`, `machine_id`, `video_inspection_id` — runs the full offline pipeline on an uploaded video in the background, pushing results to `wastara-be` as they're found |
 
 ---
 
