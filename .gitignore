@@ -36,7 +36,7 @@ datasets/deepfashion2/annotations/**
 *.tar.gz
 
 # Runtime outputs
-data/input/videos/**
+# data/input/videos/**
 !data/input/videos/.gitkeep
 data/output/annotated_videos/**
 !data/output/annotated_videos/.gitkeep
