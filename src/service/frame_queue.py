@@ -3,8 +3,10 @@ from __future__ import annotations
 import queue
 import threading
 import time
+import cv2
 from dataclasses import dataclass
 from pathlib import Path
+from src.tracking.tracker import IoUTracker
 
 import numpy as np
 
@@ -79,9 +81,6 @@ def resolve_source(raw: str) -> str | int:
 
 
 def open_capture(source: str):
-    """Open capture on the caller thread (required for macOS camera permission)."""
-    import cv2
-
     resolved = resolve_source(source)
     cap = cv2.VideoCapture(resolved)
     return cap, resolved
@@ -98,7 +97,6 @@ def _webcam_hint(resolved: str | int) -> str:
 
 
 def is_file_source(source: str) -> bool:
-    """Check if the source is a local file path (not webcam)."""
     if source in {"webcam", "0", "default"}:
         return False
     resolved = resolve_source(source)
@@ -115,18 +113,6 @@ def start_event_capture_thread(
     detector,
     tracking_cfg: dict | None = None,
 ) -> threading.Thread:
-    """Event-driven capture: run the (already-loaded) garment detector on every
-    read frame through a lightweight gate tracker, and only enqueue a frame for
-    full downstream analysis while at least one object is currently tracked in
-    the scene. Fully idle stretches (nothing in frame) are skipped entirely
-    instead of being captured on a blind fixed-interval timer.
-
-    The gate tracker is a separate instance from the analysis engine's own
-    tracker (used later in the worker thread), so this never interferes with
-    track identity/continuity used for defect aggregation — it only decides
-    *whether* to hand a frame off, not how it's analyzed."""
-    from src.tracking.tracker import IoUTracker
-
     cap, resolved = open_capture(source)
     if not cap.isOpened():
         raise CaptureError(
