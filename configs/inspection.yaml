@@ -35,8 +35,7 @@ defect:
   anomaly_min_area_ratio: 0.008
 
 streaming:
-  cooldown_frames: 8
-  minimum_confirmations: 1
+  minimum_confirmations: 3
   confidence_threshold: 0.42
 
 output:

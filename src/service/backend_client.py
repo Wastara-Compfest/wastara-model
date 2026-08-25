@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AnomalyEvent:
+    event_key: str
     machine_id: str
     anomaly_score: float
     bbox_x: int
@@ -47,6 +48,7 @@ class BackendClient:
 
     def post_anomaly(self, event: AnomalyEvent, evidence_jpg: bytes) -> str | None:
         payload: dict[str, Any] = {
+            "event_key": event.event_key,
             "machine_id": event.machine_id,
             "anomaly_score": round(event.anomaly_score, 4),
             "bbox": {

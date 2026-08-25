@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 
-from src.defect.aggregator import AggregationConfig, aggregate_observations
 from src.inspection.bbox_refiner import refine_garment_bbox
-from src.inspection.frame_sampler import FrameSample
 from src.inspection.roi_extractor import extract_roi, tighten_roi_to_fabric
-from src.inspection.types import GarmentInspectionResult, SampledObservation
+from src.inspection.types import GarmentInspectionResult
 from src.pipeline.garment_inspection_pipeline import GarmentInspectionPipeline
 from src.visualization.annotator import draw_evidence, draw_tracks, draw_zone
 
@@ -16,6 +16,8 @@ class StreamAlert:
     __slots__ = (
         "track_id",
         "frame_id",
+        "frame_start",
+        "frame_end",
         "timestamp_ms",
         "anomaly_score",
         "bbox_x",
@@ -30,6 +32,8 @@ class StreamAlert:
         *,
         track_id: int,
         frame_id: int,
+        frame_start: int,
+        frame_end: int,
         timestamp_ms: float,
         anomaly_score: float,
         bbox_x: int,
@@ -40,6 +44,8 @@ class StreamAlert:
     ) -> None:
         self.track_id = track_id
         self.frame_id = frame_id
+        self.frame_start = frame_start
+        self.frame_end = frame_end
         self.timestamp_ms = timestamp_ms
         self.anomaly_score = anomaly_score
         self.bbox_x = bbox_x
@@ -49,19 +55,46 @@ class StreamAlert:
         self.evidence_jpg = evidence_jpg
 
 
+@dataclass
+class TrackAnomalyState:
+    first_frame: int | None = None
+    last_frame: int | None = None
+    consecutive: int = 0
+    confirmed: bool = False
+    max_score: float = 0.0
+    best_frame: int = 0
+    best_timestamp_ms: float = 0.0
+    bbox_x: int = 0
+    bbox_y: int = 0
+    bbox_w: int = 1
+    bbox_h: int = 1
+    evidence_jpg: bytes = b""
+
+    def reset_candidate(self) -> None:
+        if self.confirmed:
+            self.consecutive = 0
+            return
+        self.first_frame = None
+        self.last_frame = None
+        self.consecutive = 0
+        self.max_score = 0.0
+        self.evidence_jpg = b""
+
+
 class StreamingInspectionEngine(GarmentInspectionPipeline):
     """Process frames from a queue; emit anomaly alerts without blocking capture."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._zone = None
-        self._emit_last_frame: dict[int, int] = {}
         stream_cfg = self.cfg.get("streaming", {})
-        self._cooldown_frames = max(6, int(stream_cfg.get("cooldown_frames", 8)))
-        self._live_min_confirmations = int(stream_cfg.get("minimum_confirmations", 1))
+        self._live_min_confirmations = max(
+            3, int(stream_cfg.get("minimum_confirmations", 3))
+        )
         stream_conf = float(stream_cfg.get("confidence_threshold", 0.42))
         self._stream_confidence_threshold = stream_conf
         self._track_last_seen: dict[int, int] = {}
+        self._anomaly_states: dict[int, TrackAnomalyState] = {}
         self._track_buffer = int(self.cfg.get("tracking", {}).get("track_buffer", 30))
 
     def setup_zone(self, width: int, height: int) -> None:
@@ -111,7 +144,7 @@ class StreamingInspectionEngine(GarmentInspectionPipeline):
             if not zone.contains(tr.detection.bbox, self.zone_overlap):
                 continue
             self.sampler.add(tr, frame.copy())
-            inline = self._inline_anomaly(tr, frame, frame_id, timestamp_ms)
+            inline = self._observe_anomaly(tr, frame, frame_id, timestamp_ms)
             if inline is not None:
                 alerts.append(inline)
 
@@ -121,35 +154,45 @@ class StreamingInspectionEngine(GarmentInspectionPipeline):
         vis = draw_tracks(vis, tracks)
         return vis, alerts
 
-    def _inline_anomaly(self, tr, frame, frame_id, timestamp_ms) -> StreamAlert | None:
-        if not self._can_emit(tr.track_id, frame_id):
-            return None
-
+    def _observe_anomaly(self, tr, frame, frame_id, timestamp_ms) -> StreamAlert | None:
         garment_bbox = refine_garment_bbox(frame, tr.detection.bbox, self.detector)
         roi = tighten_roi_to_fabric(extract_roi(frame, garment_bbox))
         pred = self.analyzer.analyze(roi)
-        threshold = getattr(self, "_stream_confidence_threshold", self.agg_cfg.confidence_threshold)
+        threshold = getattr(
+            self, "_stream_confidence_threshold", self.agg_cfg.confidence_threshold
+        )
+        state = self._anomaly_states.setdefault(tr.track_id, TrackAnomalyState())
         if not pred.is_defect or pred.confidence < threshold:
+            state.reset_candidate()
             return None
 
         db = pred.bbox or roi.garment_bbox
-        evidence = self._encode_evidence(
-            frame, tr.track_id, roi.garment_bbox, pred.confidence, db
-        )
-        self._emit_last_frame[tr.track_id] = frame_id
-        return StreamAlert(
-            track_id=tr.track_id,
-            frame_id=frame_id,
-            timestamp_ms=timestamp_ms,
-            anomaly_score=float(pred.confidence),
-            bbox_x=int(db.x1),
-            bbox_y=int(db.y1),
-            bbox_w=max(1, int(db.x2 - db.x1)),
-            bbox_h=max(1, int(db.y2 - db.y1)),
-            evidence_jpg=evidence,
-        )
+        if state.first_frame is None:
+            state.first_frame = frame_id
+        state.last_frame = frame_id
+        state.consecutive += 1
 
-    def _finalize_stale_tracks(self, seen_ids: set[int], frame_id: int) -> list[StreamAlert]:
+        if not state.evidence_jpg or pred.confidence >= state.max_score:
+            state.max_score = float(pred.confidence)
+            state.best_frame = frame_id
+            state.best_timestamp_ms = timestamp_ms
+            state.bbox_x = int(db.x1)
+            state.bbox_y = int(db.y1)
+            state.bbox_w = max(1, int(db.x2 - db.x1))
+            state.bbox_h = max(1, int(db.y2 - db.y1))
+            state.evidence_jpg = self._encode_evidence(
+                frame, tr.track_id, roi.garment_bbox, pred.confidence, db
+            )
+
+        if state.confirmed or state.consecutive < self._live_min_confirmations:
+            return None
+
+        state.confirmed = True
+        return self._alert_from_state(tr.track_id, state)
+
+    def _finalize_stale_tracks(
+        self, seen_ids: set[int], frame_id: int
+    ) -> list[StreamAlert]:
         stale = [
             tid
             for tid, last in self._track_last_seen.items()
@@ -157,93 +200,39 @@ class StreamingInspectionEngine(GarmentInspectionPipeline):
         ]
         out: list[StreamAlert] = []
         for track_id in stale:
-            out.extend(self._aggregate_track(track_id, frame_id))
+            alert = self._finalize_track(track_id)
+            if alert is not None:
+                out.append(alert)
             self._track_last_seen.pop(track_id, None)
             self.sampler.clear_track(track_id)
         return out
 
-    def _aggregate_track(
-        self, track_id: int, frame_id: int, *, force: bool = False
-    ) -> list[StreamAlert]:
-        samples = self.sampler.select(track_id)
-        if not samples:
-            return []
-
-        observations: list[SampledObservation] = []
-        analyzed: list[tuple[FrameSample, SampledObservation]] = []
-        for sample in samples:
-            garment_bbox = refine_garment_bbox(
-                sample.frame, sample.bbox, self.detector
-            )
-            roi = tighten_roi_to_fabric(extract_roi(sample.frame, garment_bbox))
-            garment_bbox = roi.garment_bbox
-            pred = self.analyzer.analyze(roi)
-            obs = SampledObservation(
-                frame_id=sample.frame_id,
-                timestamp_ms=sample.timestamp_ms,
-                garment_bbox=garment_bbox,
-                prediction=pred,
-            )
-            observations.append(obs)
-            analyzed.append((sample, obs))
-
-        agg_cfg = AggregationConfig(
-            method=self.agg_cfg.method,
-            minimum_confirmations=self._live_min_confirmations,
-            confidence_threshold=getattr(
-                self, "_stream_confidence_threshold", self.agg_cfg.confidence_threshold
-            ),
-        )
-        result = aggregate_observations(
-            track_id, "clothing", observations, config=agg_cfg
-        )
-        if result.status != "DEFECT" or result.defect_bbox is None:
-            return []
-        if not force and not self._can_emit(track_id, frame_id):
-            return []
-
-        defect_samples = [
-            (sample, obs)
-            for sample, obs in analyzed
-            if obs.prediction.is_defect
-        ]
-        if not defect_samples:
-            return []
-
-        best_sample, best = max(
-            defect_samples,
-            key=lambda pair: pair[1].prediction.confidence,
+    def _alert_from_state(self, track_id: int, state: TrackAnomalyState) -> StreamAlert:
+        assert state.first_frame is not None
+        assert state.last_frame is not None
+        return StreamAlert(
+            track_id=track_id,
+            frame_id=state.best_frame,
+            frame_start=state.first_frame,
+            frame_end=state.last_frame,
+            timestamp_ms=state.best_timestamp_ms,
+            anomaly_score=state.max_score,
+            bbox_x=state.bbox_x,
+            bbox_y=state.bbox_y,
+            bbox_w=state.bbox_w,
+            bbox_h=state.bbox_h,
+            evidence_jpg=state.evidence_jpg,
         )
 
-        db = result.defect_bbox
-        evidence = self._encode_evidence(
-            best_sample.frame,
-            track_id,
-            best.garment_bbox,
-            result.confidence,
-            db,
-            result=result,
-        )
-        self._emit_last_frame[track_id] = frame_id
-        return [
-            StreamAlert(
-                track_id=track_id,
-                frame_id=best.frame_id,
-                timestamp_ms=best.timestamp_ms,
-                anomaly_score=float(result.confidence),
-                bbox_x=int(db.x1),
-                bbox_y=int(db.y1),
-                bbox_w=max(1, int(db.x2 - db.x1)),
-                bbox_h=max(1, int(db.y2 - db.y1)),
-                evidence_jpg=evidence,
-            )
-        ]
+    def _finalize_track(self, track_id: int) -> StreamAlert | None:
+        state = self._anomaly_states.pop(track_id, None)
+        if state is None or not state.confirmed:
+            return None
+        return self._alert_from_state(track_id, state)
 
-    def _can_emit(self, track_id: int, frame_id: int) -> bool:
-        last = self._emit_last_frame.get(track_id, -10_000)
-        return frame_id - last >= self._cooldown_frames
-
-    def _encode_evidence(self, frame, track_id, garment_bbox, confidence, defect_bbox, result=None):
+    def _encode_evidence(
+        self, frame, track_id, garment_bbox, confidence, defect_bbox, result=None
+    ):
         payload = result or GarmentInspectionResult(
             track_id=track_id,
             garment_type="clothing",
@@ -267,7 +256,9 @@ class StreamingInspectionEngine(GarmentInspectionPipeline):
         """Emit aggregated alerts for active tracks before shutdown."""
         out: list[StreamAlert] = []
         for track_id in list(self._track_last_seen.keys()):
-            out.extend(self._aggregate_track(track_id, frame_id, force=True))
+            alert = self._finalize_track(track_id)
+            if alert is not None:
+                out.append(alert)
             self.sampler.clear_track(track_id)
         self._track_last_seen.clear()
         return out
