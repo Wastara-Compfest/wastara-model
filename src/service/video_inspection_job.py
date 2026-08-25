@@ -31,11 +31,20 @@ def run_video_inspection_job(
     video_inspection_id: str,
     backend: BackendClient,
 ) -> None:
+    logger.info(
+        "video inspection job %s starting: %s", video_inspection_id, video_path
+    )
     defect_count = 0
     try:
         with _pipeline_lock:
             pipeline = _get_pipeline()
             result = pipeline.run(video_path)
+
+        logger.info(
+            "video inspection job %s: pipeline finished, %s",
+            video_inspection_id,
+            result.get("summary"),
+        )
 
         for garment in result["garments"]:
             if garment["status"] != "DEFECT" or not garment["defect_bbox"]:
@@ -43,6 +52,11 @@ def run_video_inspection_job(
 
             evidence_paths = garment["evidence_paths"]
             if not evidence_paths:
+                logger.warning(
+                    "video inspection job %s: track %s is DEFECT but has no evidence path, skipping",
+                    video_inspection_id,
+                    garment["track_id"],
+                )
                 continue
             evidence_bytes = (ROOT / evidence_paths[0]).read_bytes()
 
@@ -62,7 +76,19 @@ def run_video_inspection_job(
             posted_id = backend.post_anomaly(event, evidence_bytes)
             if posted_id:
                 defect_count += 1
+            else:
+                logger.warning(
+                    "video inspection job %s: failed to post track %s to backend (see warning above)",
+                    video_inspection_id,
+                    garment["track_id"],
+                )
 
+        logger.info(
+            "video inspection job %s done: %s/%s defects posted to backend",
+            video_inspection_id,
+            defect_count,
+            sum(1 for g in result["garments"] if g["status"] == "DEFECT"),
+        )
         backend.post_inspection_complete(
             video_inspection_id, status="done", defect_count=defect_count
         )

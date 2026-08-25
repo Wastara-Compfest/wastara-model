@@ -67,7 +67,14 @@ class BackendClient:
                 data={"data": json.dumps(payload)},
                 files={"evidence": ("evidence.jpg", evidence_jpg, "image/jpeg")},
             )
-            res.raise_for_status()
+            if res.status_code >= 400:
+                logger.warning(
+                    "failed to post defect event: HTTP %s from %s: %s",
+                    res.status_code,
+                    res.request.url,
+                    res.text,
+                )
+                return None
             body = res.json()
             return str(body.get("id")) if isinstance(body, dict) else None
         except Exception as exc:
@@ -92,7 +99,13 @@ class BackendClient:
                     "error_message": error_message,
                 },
             )
-            res.raise_for_status()
+            if res.status_code >= 400:
+                logger.warning(
+                    "failed to post inspection complete: HTTP %s from %s: %s",
+                    res.status_code,
+                    res.request.url,
+                    res.text,
+                )
         except Exception as exc:
             logger.warning("failed to post inspection complete: %s", exc)
 

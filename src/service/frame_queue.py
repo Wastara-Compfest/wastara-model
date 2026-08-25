@@ -7,6 +7,7 @@ import cv2
 from dataclasses import dataclass
 from pathlib import Path
 from src.tracking.tracker import IoUTracker
+from src.visualization.annotator import draw_tracks
 
 import numpy as np
 
@@ -148,13 +149,13 @@ def start_event_capture_thread(
                 (frame_id / video_fps) * 1000.0 if is_video else time.perf_counter() * 1000.0
             )
 
-            if on_frame is not None:
-                on_frame(frame)
-
             detections = detector.predict(frame)
             tracks = gate_tracker.update(
                 detections, frame_id=frame_id, timestamp_ms=timestamp_ms
             )
+
+            if on_frame is not None:
+                on_frame(draw_tracks(frame, tracks) if tracks else frame)
 
             if tracks:
                 frame_queue.put(
